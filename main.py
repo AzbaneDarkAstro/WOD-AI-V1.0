@@ -1,38 +1,49 @@
-# WOD AI V10 - improved mobile UI prototype
-# English interface; chat accepts multilingual text.
-# Real AI replies and live voice features require a secure backend/service.
-
+# WOD AI V11 - Kivy UI closer to the purple mockup
 import os
 import json
+import math
 from datetime import datetime
 
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.core.window import Window
+from kivy.graphics import Color, RoundedRectangle, Ellipse, Line, Rectangle
+from kivy.graphics.texture import Texture
 from kivy.metrics import dp, sp
-from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.label import Label
 from kivy.uix.button import Button
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
-from kivy.graphics import Color, RoundedRectangle, Ellipse, Line
-from kivy.utils import get_color_from_hex
+from kivy.uix.widget import Widget
+from kivy.utils import get_color_from_hex as hexc
+import certifi
+from kivy.network.urlrequest import UrlRequest
 
-BG = '#080610'
-SURFACE = '#151020'
-SURFACE_2 = '#211432'
-PURPLE = '#873BFF'
-PURPLE_LIGHT = '#C18BFF'
-WHITE = '#F7F2FF'
-MUTED = '#A99DB8'
-BORDER = '#39264F'
+# >>> حط الـ key ديالك بين العلامتين <<<
+GEMINI_KEY = 'PUT_YOUR_KEY_HERE'
+GEMINI_MODEL = 'gemini-2.5-flash'
 
-Window.clearcolor = get_color_from_hex(BG)
+BG = '#07050f'
+BG_TOP = '#2b0b66'
+SURFACE = '#140d26'
+SURFACE_2 = '#1d1236'
+PURPLE = '#7b2fff'
+PURPLE_LIGHT = '#c18bff'
+WHITE = '#f7f2ff'
+MUTED = '#a99db8'
+BORDER = '#4a2c7a'
+
+Window.clearcolor = hexc(BG)
+
+# Put an Arabic-capable font here (e.g. NotoSansArabic-Regular.ttf) for Arabic text
+FONT = 'fonts/NotoSansArabic-Regular.ttf'
+FONT = FONT if os.path.exists(FONT) else 'Roboto'
 
 
-def display_text(value):
-    """Shape Arabic if optional packages are installed; preserve other scripts."""
+def shape(value):
     value = str(value)
     try:
         import arabic_reshaper
@@ -42,92 +53,171 @@ def display_text(value):
         return value
 
 
-class RoundedBox(BoxLayout):
-    def __init__(self, color=SURFACE, radius=18, outline=False, **kwargs):
-        super().__init__(**kwargs)
-        self._rgba = get_color_from_hex(color)
-        self._radius = dp(radius)
+def gradient_texture(top, bottom):
+    tex = Texture.create(size=(1, 2), colorfmt='rgba')
+    b = [int(c * 255) for c in hexc(bottom)]
+    t = [int(c * 255) for c in hexc(top)]
+    tex.blit_buffer(bytes(b + t), colorfmt='rgba', bufferfmt='ubyte')
+    tex.mag_filter = 'linear'
+    return tex
+
+
+class GScreen(Screen):
+    """Screen with purple vertical gradient background."""
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        tex = gradient_texture(BG_TOP, BG)
+        with self.canvas.before:
+            Color(1, 1, 1, 1)
+            self._bg = Rectangle(texture=tex, pos=self.pos, size=self.size)
+        self.bind(pos=self._s, size=self._s)
+
+    def _s(self, *_):
+        self._bg.pos, self._bg.size = self.pos, self.size
+
+
+class Box(BoxLayout):
+    def __init__(self, color=SURFACE, radius=18, outline=True, alpha=0.9,
+                 texture=None, **kw):
+        super().__init__(**kw)
+        self._r = dp(radius)
         self._outline = outline
         with self.canvas.before:
-            Color(*self._rgba)
+            Color(*hexc(color)[:3], alpha)
             self._bg = RoundedRectangle(pos=self.pos, size=self.size,
-                                        radius=[self._radius])
+                                        radius=[self._r], texture=texture)
             if outline:
-                Color(*get_color_from_hex(BORDER))
-                self._line = Line(rounded_rectangle=(self.x, self.y,
-                    self.width, self.height, self._radius), width=1)
+                Color(*hexc(BORDER))
+                self._ln = Line(rounded_rectangle=(0, 0, 1, 1, self._r), width=1)
         self.bind(pos=self._sync, size=self._sync)
 
     def _sync(self, *_):
-        self._bg.pos = self.pos
-        self._bg.size = self.size
+        self._bg.pos, self._bg.size = self.pos, self.size
         if self._outline:
-            self._line.rounded_rectangle = (self.x, self.y,
-                self.width, self.height, self._radius)
+            self._ln.rounded_rectangle = (self.x, self.y, self.width,
+                                          self.height, self._r)
 
 
-class TextLabel(Label):
-    def __init__(self, text='', color=WHITE, size=14, halign='left', **kwargs):
-        super().__init__(**kwargs)
-        self.text = display_text(text)
-        self.color = get_color_from_hex(color)
+class Txt(Label):
+    def __init__(self, text='', color=WHITE, size=14, halign='left', **kw):
+        super().__init__(**kw)
+        self.font_name = FONT
+        self.text = shape(text)
+        self.color = hexc(color)
         self.font_size = sp(size)
         self.halign = halign
         self.valign = 'middle'
-        self.bind(size=self._sync_text)
-
-    def _sync_text(self, *_):
-        self.text_size = (self.width, None)
+        self.bind(size=lambda *_: setattr(self, 'text_size', (self.width, self.height)))
 
 
-class PurpleButton(Button):
-    def __init__(self, text='', fill=PURPLE, **kwargs):
-        super().__init__(**kwargs)
-        self.text = display_text(text)
-        self.background_normal = ''
-        self.background_down = ''
-        self.background_color = (0, 0, 0, 0)
-        self.color = get_color_from_hex(WHITE)
+class Pill(Button):
+    """Rounded button with outline (filled or ghost)."""
+    def __init__(self, text='', fill=None, radius=24, **kw):
+        super().__init__(**kw)
+        self.text = shape(text)
+        self.font_name = FONT
         self.font_size = sp(13)
-        self._fill = get_color_from_hex(fill)
+        self.background_normal = self.background_down = ''
+        self.background_color = (0, 0, 0, 0)
+        self.color = hexc(WHITE)
+        r = dp(radius)
         with self.canvas.before:
-            Color(*self._fill)
-            self._shape = RoundedRectangle(pos=self.pos, size=self.size,
-                                           radius=[dp(14)])
-        self.bind(pos=self._sync, size=self._sync)
+            Color(*(hexc(fill) if fill else (0.2, 0.1, 0.4, 0.35)))
+            self._bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[r])
+            Color(*hexc(PURPLE if not fill else PURPLE_LIGHT)[:3], 0.7)
+            self._ln = Line(rounded_rectangle=(0, 0, 1, 1, r), width=1.1)
+        self._r = r
+        self.bind(pos=self._s, size=self._s)
 
-    def _sync(self, *_):
-        self._shape.pos = self.pos
-        self._shape.size = self.size
+    def _s(self, *_):
+        self._bg.pos, self._bg.size = self.pos, self.size
+        self._ln.rounded_rectangle = (self.x, self.y, self.width, self.height, self._r)
 
 
-def header(title='WOD AI'):
-    row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(10))
-    mark = RoundedBox(color=SURFACE_2, size_hint_x=None, width=dp(42),
-                      padding=dp(4))
-    mark.add_widget(TextLabel('W', color=PURPLE_LIGHT, size=22, halign='center'))
-    row.add_widget(mark)
-    name = TextLabel(title, size=20)
-    name.bold = True
-    row.add_widget(name)
-    settings = PurpleButton('...', fill=SURFACE_2,
-                            size_hint_x=None, width=dp(45))
-    settings.bind(on_release=lambda *_: App.get_running_app().go('settings'))
-    row.add_widget(settings)
+class Circle(Button):
+    """Circular icon button."""
+    def __init__(self, text='', fill=SURFACE_2, size_dp=42, glow=False, **kw):
+        super().__init__(size_hint=(None, None), size=(dp(size_dp),) * 2, **kw)
+        self.text = text
+        self.background_normal = self.background_down = ''
+        self.background_color = (0, 0, 0, 0)
+        self.color = hexc(WHITE)
+        self.font_size = sp(16)
+        with self.canvas.before:
+            if glow:
+                Color(*hexc(PURPLE)[:3], 0.35)
+                self._g = Ellipse()
+            Color(*hexc(fill)[:3], 0.9)
+            self._bg = Ellipse()
+            Color(*hexc(PURPLE)[:3], 0.9)
+            self._ln = Line(width=1.2)
+        self._glow = glow
+        self.bind(pos=self._s, size=self._s)
+
+    def _s(self, *_):
+        self._bg.pos, self._bg.size = self.pos, self.size
+        self._ln.ellipse = (self.x, self.y, self.width, self.height)
+        if self._glow:
+            self._g.pos = (self.x - dp(6), self.y - dp(6))
+            self._g.size = (self.width + dp(12), self.height + dp(12))
+
+
+class Orb(Widget):
+    """Glowing purple orb. Set animate=True for pulsing."""
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.t = 0
+        self._ev = None
+        self.bind(pos=self.draw, size=self.draw)
+
+    def start(self):
+        if not self._ev:
+            self._ev = Clock.schedule_interval(self._tick, 1 / 30)
+
+    def stop(self):
+        if self._ev:
+            self._ev.cancel()
+            self._ev = None
+
+    def _tick(self, dt):
+        self.t += dt
+        self.draw()
+
+    def draw(self, *_):
+        self.canvas.clear()
+        cx, cy = self.center
+        base = min(self.width, self.height) / 2
+        pulse = 1 + 0.04 * math.sin(self.t * 3)
+        with self.canvas:
+            for i in range(10):  # soft glow
+                r = base * pulse * (1.0 - i * 0.04)
+                Color(0.5, 0.15, 1, 0.07 + i * 0.012)
+                Ellipse(pos=(cx - r, cy - r), size=(2 * r, 2 * r))
+            for k in range(5):  # swirling rings
+                a = self.t * (0.8 + k * 0.3) + k
+                rx = base * 0.8 * pulse
+                ry = rx * (0.45 + 0.1 * k)
+                Color(0.75, 0.45, 1, 0.55)
+                Line(ellipse=(cx - rx, cy - ry, 2 * rx, 2 * ry,
+                              math.degrees(a) % 360, (math.degrees(a) + 250) % 360 + 360),
+                     width=1.1)
+            r = base * 0.16 * pulse  # bright core
+            Color(1, 0.9, 1, 0.95)
+            Ellipse(pos=(cx - r, cy - r), size=(2 * r, 2 * r))
+
+
+def topbar(title, back=None, menu=True):
+    row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+    if back:
+        b = Circle('<')
+        b.bind(on_release=lambda *_: App.get_running_app().go(back))
+        row.add_widget(b)
+    row.add_widget(Txt(title, size=17, halign='center' if back else 'left'))
+    if menu:
+        m = Circle('=')
+        m.bind(on_release=lambda *_: App.get_running_app().go('settings'))
+        row.add_widget(m)
     return row
-
-
-def bottom_nav():
-    nav = RoundedBox(orientation='horizontal', size_hint_y=None,
-                     height=dp(59), padding=dp(4), spacing=dp(3), color=SURFACE)
-    for label, target in [('HOME', 'home'), ('CHAT', 'chat'),
-                          ('VOICE', 'voice'), ('HISTORY', 'history')]:
-        b = Button(text=label, background_normal='',
-                   background_color=(0, 0, 0, 0),
-                   color=get_color_from_hex(PURPLE_LIGHT), font_size=sp(10))
-        b.bind(on_release=lambda _b, t=target: App.get_running_app().go(t))
-        nav.add_widget(b)
-    return nav
 
 
 class WODAI(App):
@@ -135,19 +225,27 @@ class WODAI(App):
         self.title = 'WOD AI'
         self.history_path = os.path.join(self.user_data_dir, 'wod_ai_history.json')
         self.history = self.load_history()
-        manager = ScreenManager()
-        for screen in (HomeScreen(name='home'), ChatScreen(name='chat'),
-                       VoiceScreen(name='voice'), HistoryScreen(name='history'),
-                       SettingsScreen(name='settings')):
-            manager.add_widget(screen)
-        self.manager = manager
-        return manager
+        sm = ScreenManager(transition=FadeTransition(duration=0.15))
+        for s in (HomeScreen(name='home'), ChatScreen(name='chat'),
+                  VoiceScreen(name='voice'), HistoryScreen(name='history'),
+                  SettingsScreen(name='settings')):
+            sm.add_widget(s)
+        self.sm = sm
+        Window.bind(on_keyboard=self.on_key)
+        return sm
+
+    def on_key(self, _w, key, *_):
+        if key == 27:  # Android back button
+            if self.sm.current != 'home':
+                self.go('home')
+                return True
+        return False
 
     def load_history(self):
         try:
-            with open(self.history_path, 'r', encoding='utf-8') as f:
-                result = json.load(f)
-                return result if isinstance(result, list) else []
+            with open(self.history_path, encoding='utf-8') as f:
+                r = json.load(f)
+                return r if isinstance(r, list) else []
         except Exception:
             return []
 
@@ -159,227 +257,254 @@ class WODAI(App):
         except Exception:
             pass
 
-    def add_chat(self, question, answer):
-        self.history.append({'question': question, 'answer': answer,
+    def add_chat(self, q, a):
+        self.history.append({'question': q, 'answer': a,
                              'time': datetime.now().strftime('%Y-%m-%d %H:%M')})
         self.save_history()
 
-    def go(self, screen):
-        self.manager.current = screen
-        if screen == 'history':
-            self.manager.get_screen('history').refresh()
+    def go(self, name, prompt=None):
+        self.sm.current = name
+        if name == 'history':
+            self.sm.get_screen('history').refresh()
+        if name == 'chat' and prompt:
+            self.sm.get_screen('chat').input.text = prompt
 
 
-class HomeScreen(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(10))
-        root.add_widget(header())
-        scroll = ScrollView(do_scroll_x=False)
-        content = BoxLayout(orientation='vertical', size_hint_y=None,
-                            spacing=dp(14), padding=(0, dp(3), 0, dp(12)))
-        content.bind(minimum_height=content.setter('height'))
+class HomeScreen(GScreen):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        root = BoxLayout(orientation='vertical', padding=dp(16), spacing=dp(12))
 
-        hero = RoundedBox(orientation='vertical', color=SURFACE_2,
-                          padding=dp(17), spacing=dp(7),
-                          size_hint_y=None, height=dp(175), outline=True)
-        hero.add_widget(TextLabel('WELCOME TO YOUR AI WORKSPACE',
-                                  color=PURPLE_LIGHT, size=10))
-        hero.add_widget(TextLabel('Smart Help,\nInstantly for You', size=25))
-        hero.add_widget(TextLabel('One assistant. Many languages. Endless ideas.',
-                                  color=MUTED, size=12))
-        start = PurpleButton('START NEW CHAT', size_hint_y=None, height=dp(40))
+        # greeting row
+        top = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(10))
+        av = Orb(size_hint=(None, None), size=(dp(44), dp(44)))
+        top.add_widget(av)
+        col = BoxLayout(orientation='vertical')
+        col.add_widget(Txt('Hi there', color=MUTED, size=11))
+        col.add_widget(Txt('Jack Johnson', size=15))
+        top.add_widget(col)
+        m = Circle('=')
+        m.bind(on_release=lambda *_: App.get_running_app().go('settings'))
+        top.add_widget(m)
+        root.add_widget(top)
+
+        root.add_widget(Txt('Smart Help,\nInstantly for You', size=28,
+                            size_hint_y=None, height=dp(90)))
+
+        # tool cards: one tall + two stacked
+        tools = BoxLayout(spacing=dp(10), size_hint_y=None, height=dp(210))
+        tall = Box(orientation='vertical', padding=dp(12), color=PURPLE, alpha=0.45,
+                   texture=gradient_texture('#b04bff', '#1a0a3a'))
+        tall.add_widget(Widget())
+        tall.add_widget(Txt('Generating\nVisual', size=14, size_hint_y=None, height=dp(44)))
+        tall.add_widget(self._open(tall, 'Create a visual: '))
+        tools.add_widget(tall)
+
+        right = BoxLayout(orientation='vertical', spacing=dp(10))
+        for t, p in (('Generate\nDocument', 'Draft a document about '),
+                     ('Organizing\nMeeting', 'Plan a meeting agenda for ')):
+            c = Box(orientation='vertical', padding=dp(12), color=SURFACE_2)
+            c.add_widget(Widget())
+            c.add_widget(Txt(t, size=13, size_hint_y=None, height=dp(40)))
+            self._open(c, p)
+            tap = Button(background_color=(0, 0, 0, 0), background_normal='',
+                         pos_hint={'x': 0, 'y': 0})
+            tap.bind(on_release=lambda _b, p=p: App.get_running_app().go('chat', p))
+            c.bind(on_touch_up=lambda w, touch, p=p: (
+                App.get_running_app().go('chat', p) if w.collide_point(*touch.pos) else None))
+            right.add_widget(c)
+        tools.add_widget(right)
+        root.add_widget(tools)
+
+        # recent chat
+        hdr = BoxLayout(size_hint_y=None, height=dp(30))
+        hdr.add_widget(Txt('Recent Chat', size=15))
+        see = Button(text='See All', size_hint_x=None, width=dp(70), font_size=sp(11),
+                     background_normal='', background_color=(0, 0, 0, 0),
+                     color=hexc(MUTED))
+        see.bind(on_release=lambda *_: App.get_running_app().go('history'))
+        hdr.add_widget(see)
+        root.add_widget(hdr)
+
+        chips = GridLayout(cols=2, spacing=dp(8), size_hint_y=None, height=dp(96))
+        for label, prompt in (('Generate AI Image', 'Generate an image of '),
+                              ('Summarize This', 'Summarize this: '),
+                              ('Build Quick Report', 'Build a quick report on '),
+                              ('Ask Anything Now', '')):
+            b = Pill(label, radius=16)
+            b.font_size = sp(11)
+            b.bind(on_release=lambda _b, p=prompt: App.get_running_app().go('chat', p))
+            chips.add_widget(b)
+        root.add_widget(chips)
+
+        root.add_widget(Widget())
+
+        # start new chat pill + voice
+        bottom = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
+        start = Pill('Start New Chat   >', radius=26)
         start.bind(on_release=lambda *_: App.get_running_app().go('chat'))
-        hero.add_widget(start)
-        content.add_widget(hero)
-
-        content.add_widget(TextLabel('EXPLORE YOUR TOOLS', size=16))
-        grid = GridLayout(cols=2, spacing=dp(10), size_hint_y=None,
-                          row_default_height=dp(145), row_force_default=True)
-        grid.bind(minimum_height=grid.setter('height'))
-        tools = [
-            ('01', 'Generate Visual', 'Create image ideas and visuals'),
-            ('02', 'Generate Document', 'Draft and organize documents'),
-            ('03', 'Organize Meeting', 'Plan agendas and notes'),
-            ('04', 'Writing Assistant', 'Improve text and writing'),
-            ('05', 'Idea Generator', 'Explore new possibilities'),
-            ('06', 'Voice Analysis', 'Open voice assistant'),
-        ]
-        for number, title, subtitle in tools:
-            tile = RoundedBox(orientation='vertical', color=SURFACE,
-                              padding=dp(11), spacing=dp(5), outline=True)
-            tile.add_widget(TextLabel(number, color=PURPLE_LIGHT, size=12))
-            tile.add_widget(TextLabel(title, size=14))
-            tile.add_widget(TextLabel(subtitle, color=MUTED, size=10))
-            button = PurpleButton('OPEN', size_hint_y=None, height=dp(32))
-            target = 'voice' if title == 'Voice Analysis' else 'chat'
-            button.bind(on_release=lambda _b, t=target: App.get_running_app().go(t))
-            tile.add_widget(button)
-            grid.add_widget(tile)
-        content.add_widget(grid)
-
-        content.add_widget(TextLabel('RECENT ACTIVITY', size=16))
-        recent = RoundedBox(orientation='vertical', color=SURFACE,
-                            padding=dp(12), size_hint_y=None, height=dp(65))
-        recent.add_widget(TextLabel('Your recent conversations appear here.',
-                                    color=MUTED, size=11))
-        content.add_widget(recent)
-        scroll.add_widget(content)
-        root.add_widget(scroll)
-        root.add_widget(bottom_nav())
+        bottom.add_widget(start)
+        mic = Circle('MIC', size_dp=50, glow=True)
+        mic.font_size = sp(10)
+        mic.bind(on_release=lambda *_: App.get_running_app().go('voice'))
+        bottom.add_widget(mic)
+        root.add_widget(bottom)
         self.add_widget(root)
 
+    def _open(self, card, prompt):
+        # small arrow label; the whole card is tappable via on_touch_up
+        arrow = Txt('>', color=PURPLE_LIGHT, size=16, halign='right',
+                    size_hint_y=None, height=dp(24))
+        if prompt.startswith('Create a visual'):
+            arrow.bind(on_touch_up=lambda w, t: App.get_running_app().go('chat', prompt)
+                       if w.collide_point(*t.pos) else None)
+            return arrow
+        card.add_widget(arrow)
+        return arrow
 
-class ChatScreen(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        root = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(9))
-        root.add_widget(header('WOD AI  /  CHAT'))
-        self.messages = BoxLayout(orientation='vertical', size_hint_y=None,
-                                  spacing=dp(10), padding=dp(3))
-        self.messages.bind(minimum_height=self.messages.setter('height'))
-        scroll = ScrollView(do_scroll_x=False)
-        scroll.add_widget(self.messages)
-        self.scroll = scroll
-        welcome = RoundedBox(size_hint_y=None, height=dp(78), padding=dp(11))
-        welcome.add_widget(TextLabel(
-            'Hello! Ask your question in Arabic, English, French, or another language.',
-            size=13))
-        self.messages.add_widget(welcome)
-        root.add_widget(scroll)
 
-        composer = RoundedBox(orientation='horizontal', size_hint_y=None,
-                              height=dp(58), padding=dp(5), spacing=dp(7))
+class Bubble(Box):
+    def __init__(self, text, user=False, **kw):
+        super().__init__(color=SURFACE_2 if not user else PURPLE,
+                         alpha=0.85 if not user else 0.35,
+                         size_hint=(None, None), padding=dp(11), **kw)
+        self.width = Window.width * 0.72
+        self.label = Txt(text, size=13, size_hint_y=None)
+        self.label.text_size = (self.width - dp(22), None)
+        self.label.bind(texture_size=self._fit)
+        self.add_widget(self.label)
+
+    def _fit(self, _w, ts):
+        self.label.height = ts[1]
+        self.height = ts[1] + dp(22)
+
+
+class ChatScreen(GScreen):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(10))
+        self.convo = []
+        root.add_widget(topbar('Chat Bot', back='home'))
+
+        self.msgs = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(12))
+        self.msgs.bind(minimum_height=self.msgs.setter('height'))
+        self.scroll = ScrollView(do_scroll_x=False)
+        self.scroll.add_widget(self.msgs)
+        root.add_widget(self.scroll)
+        self.add_msg('Hello! Ask your question in Arabic, English, French, or any language.')
+
+        comp = Box(size_hint_y=None, height=dp(54), padding=(dp(6), dp(5)),
+                   spacing=dp(6), radius=27)
+        plus = Button(text='+', size_hint_x=None, width=dp(34), background_normal='',
+                      background_color=(0, 0, 0, 0), color=hexc(PURPLE_LIGHT),
+                      font_size=sp(20))
         self.input = TextInput(
-            hint_text='Ask anything...', multiline=False, font_size=sp(14),
-            background_normal='', background_active='',
-            background_color=get_color_from_hex(SURFACE_2),
-            foreground_color=get_color_from_hex(WHITE),
-            hint_text_color=get_color_from_hex(MUTED),
-            cursor_color=get_color_from_hex(PURPLE_LIGHT),
-            padding=[dp(10), dp(15), dp(10), dp(8)])
+            hint_text='Ask AI anything...', multiline=False, font_size=sp(14),
+            font_name=FONT, background_normal='', background_active='',
+            background_color=(0, 0, 0, 0), foreground_color=hexc(WHITE),
+            hint_text_color=hexc(MUTED), cursor_color=hexc(PURPLE_LIGHT),
+            padding=[dp(4), dp(14), dp(4), dp(8)])
         self.input.bind(on_text_validate=self.send)
-        send = PurpleButton('SEND', size_hint_x=None, width=dp(67))
+        mic = Button(text='MIC', size_hint_x=None, width=dp(40), font_size=sp(9),
+                     background_normal='', background_color=(0, 0, 0, 0),
+                     color=hexc(PURPLE_LIGHT))
+        mic.bind(on_release=lambda *_: App.get_running_app().go('voice'))
+        send = Circle('>', fill=PURPLE, size_dp=42)
         send.bind(on_release=self.send)
-        composer.add_widget(self.input)
-        composer.add_widget(send)
-        root.add_widget(composer)
-        root.add_widget(bottom_nav())
+        for w in (plus, self.input, mic, send):
+            comp.add_widget(w)
+        root.add_widget(comp)
         self.add_widget(root)
 
-    def add_bubble(self, text, user=False):
-        bubble = RoundedBox(orientation='vertical', size_hint=(0.94, None),
-                            padding=dp(11), color=PURPLE if user else SURFACE,
-                            outline=not user)
-        label = TextLabel(text, size=13)
-        label.size_hint_y = None
-        label.text_size = (Window.width * 0.78, None)
-        label.texture_update()
-        label.height = max(dp(30), label.texture_size[1] + dp(10))
-        bubble.add_widget(label)
-        bubble.height = label.height + dp(22)
-        self.messages.add_widget(bubble)
-        self.scroll.scroll_y = 0
+    def add_msg(self, text, user=False):
+        row = BoxLayout(size_hint_y=None, spacing=dp(8))
+        bub = Bubble(text, user)
+        if user:
+            row.add_widget(Widget())
+            row.add_widget(bub)
+        else:
+            av = Orb(size_hint=(None, None), size=(dp(30), dp(30)))
+            row.add_widget(av)
+            row.add_widget(bub)
+            row.add_widget(Widget())
+        bub.bind(height=lambda _w, h: setattr(row, 'height', h))
+        self.msgs.add_widget(row)
+        Clock.schedule_once(lambda *_: setattr(self.scroll, 'scroll_y', 0), 0.1)
+        return bub
 
     def send(self, *_):
-        question = self.input.text.strip()
-        if not question:
+        q = self.input.text.strip()
+        if not q:
             return
         self.input.text = ''
-        self.add_bubble(question, True)
-        answer = ('Your message was received. The AI service is not connected yet. '
-                  'After secure backend setup, WOD AI will generate a real reply in the language you use.')
-        self.add_bubble(answer)
-        App.get_running_app().add_chat(question, answer)
+        self.add_msg(q, True)
+        self.convo.append({'role': 'user', 'parts': [{'text': q}]})
+        bub = self.add_msg('...')
+
+        def ok(_r, res):
+            try:
+                reply = res['candidates'][0]['content']['parts'][0]['text']
+            except Exception:
+                reply = 'Error: ' + str(res)[:200]
+            bub.label.text = shape(reply)
+            self.convo.append({'role': 'model', 'parts': [{'text': reply}]})
+            App.get_running_app().add_chat(q, reply)
+
+        def fail(_r, err):
+            bub.label.text = shape('Connection error: ' + str(err)[:150])
+            self.convo.pop()
+
+        url = ('https://generativelanguage.googleapis.com/v1beta/models/'
+               + GEMINI_MODEL + ':generateContent?key=' + GEMINI_KEY)
+        body = {
+            'systemInstruction': {'parts': [{'text':
+                'You are WOD AI. Reply in the same language the user writes in.'}]},
+            'contents': self.convo[-20:],
+        }
+        UrlRequest(url, req_body=json.dumps(body),
+                   req_headers={'Content-Type': 'application/json'},
+                   on_success=ok, on_failure=fail, on_error=fail,
+                   ca_file=certifi.where(), timeout=60)
+        self.input.focus = True
 
 
-class VoiceScreen(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(12))
-        root.add_widget(header('VOICE ANALYSIS'))
-        root.add_widget(TextLabel('LISTENING MODE', color=MUTED, size=11,
-                                  halign='center', size_hint_y=None, height=dp(35)))
-        visual = BoxLayout(orientation='vertical', spacing=dp(8))
-        orb = BoxLayout(size_hint=(1, 0.75))
-        from kivy.uix.widget import Widget
-        glow = Widget()
-        with glow.canvas:
-            Color(0.35, 0.08, 0.85, 0.18)
-            Ellipse(pos=(Window.width/2-dp(105), dp(260)), size=(dp(210), dp(210)))
-            Color(0.58, 0.20, 1, 0.45)
-            Line(circle=(Window.width/2, dp(365), dp(83)), width=2)
-            Color(0.72, 0.35, 1, 0.85)
-            Line(circle=(Window.width/2, dp(365), dp(62)), width=1.5)
-            Color(0.85, 0.65, 1, 1)
-            Ellipse(pos=(Window.width/2-dp(7), dp(358)), size=(dp(14), dp(14)))
-        orb.add_widget(glow)
-        visual.add_widget(orb)
-        visual.add_widget(TextLabel('Your voice assistant', size=19, halign='center'))
-        visual.add_widget(TextLabel('Microphone and speech recognition will be enabled in a later build.',
-                                    color=MUTED, size=11, halign='center'))
-        root.add_widget(visual)
-        controls = BoxLayout(size_hint_y=None, height=dp(54), spacing=dp(10))
-        for label in ('RESET', 'MIC', 'CLOSE'):
-            controls.add_widget(PurpleButton(label, fill=SURFACE_2 if label != 'MIC' else PURPLE))
-        root.add_widget(controls)
-        root.add_widget(bottom_nav())
+class VoiceScreen(GScreen):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        root = BoxLayout(orientation='vertical', padding=dp(16), spacing=dp(10))
+        root.add_widget(topbar('Voice Analysis', back='home'))
+        root.add_widget(Txt('Listening...', color=MUTED, size=12, halign='center',
+                            size_hint_y=None, height=dp(28)))
+        self.orb = Orb(size_hint=(1, 0.5))
+        root.add_widget(self.orb)
+        root.add_widget(Txt('Generate high-quality images\ninstantly using voice commands\n'
+                            '- smart, fast, and powered by advanced AI',
+                            size=14, halign='center', color='#d9cdee',
+                            size_hint_y=None, height=dp(90)))
+        root.add_widget(Widget())
+        ctr = BoxLayout(size_hint_y=None, height=dp(80), spacing=dp(30),
+                        padding=(dp(30), 0))
+        ctr.add_widget(Widget())
+        ctr.add_widget(Circle('R', size_dp=44))
+        ctr.add_widget(Circle('MIC', fill=PURPLE, size_dp=70, glow=True))
+        close = Circle('X', size_dp=44)
+        close.bind(on_release=lambda *_: App.get_running_app().go('home'))
+        ctr.add_widget(close)
+        ctr.add_widget(Widget())
+        root.add_widget(ctr)
         self.add_widget(root)
 
+    def on_enter(self, *_):
+        self.orb.start()
 
-class HistoryScreen(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(10))
-        self.root.add_widget(header('CHAT HISTORY'))
+    def on_leave(self, *_):
+        self.orb.stop()
+
+
+class HistoryScreen(GScreen):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(10))
+        root.add_widget(topbar('Chat History', back='home'))
         self.items = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(8))
-        self.items.bind(minimum_height=self.items.setter('height'))
-        scroll = ScrollView()
-        scroll.add_widget(self.items)
-        self.root.add_widget(scroll)
-        self.root.add_widget(bottom_nav())
-        self.add_widget(self.root)
-
-    def on_pre_enter(self, *_):
-        self.refresh()
-
-    def refresh(self):
-        self.items.clear_widgets()
-        history = App.get_running_app().history
-        if not history:
-            self.items.add_widget(TextLabel('No conversations yet.', color=MUTED,
-                                            size_hint_y=None, height=dp(60)))
-            return
-        for item in reversed(history[-40:]):
-            card = RoundedBox(orientation='vertical', padding=dp(10),
-                              size_hint_y=None, height=dp(72), outline=True)
-            card.add_widget(TextLabel(item.get('question', ''), size=12))
-            card.add_widget(TextLabel(item.get('time', ''), color=MUTED, size=10))
-            self.items.add_widget(card)
-
-
-class SettingsScreen(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(11))
-        root.add_widget(header('SETTINGS'))
-        rows = [
-            'Interface language: English',
-            'Chat language: follows your message',
-            'Theme: Midnight Purple',
-            'Build: WOD AI V10',
-            'AI connection: Not connected yet',
-        ]
-        for item in rows:
-            card = RoundedBox(size_hint_y=None, height=dp(59), padding=dp(12), outline=True)
-            card.add_widget(TextLabel(item, size=12))
-            root.add_widget(card)
-        root.add_widget(TextLabel(
-            'Multilingual input is supported by the interface. Real AI responses require a secure online model connection.',
-            color=MUTED, size=11))
-        root.add_widget(bottom_nav())
-        self.add_widget(root)
-
-
-if __name__ == '__main__':
-    WODAI().run()
+        self.items.bind(minimum_height=self.items.setter('hei
