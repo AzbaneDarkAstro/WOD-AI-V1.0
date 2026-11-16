@@ -22,9 +22,8 @@ from kivy.utils import get_color_from_hex as hexc
 import certifi
 from kivy.network.urlrequest import UrlRequest
 
-# >>> حط الـ key ديالك بين العلامتين <<<
-GEMINI_KEY = 'PUT_YOUR_KEY_HERE'
-GEMINI_MODEL = 'gemini-2.5-flash'
+# >>> حط رابط الـ Worker ديالك هنا (ماشي الـ key) <<<
+WORKER_URL = 'PUT_WORKER_URL_HERE'
 
 BG = '#07050f'
 BG_TOP = '#2b0b66'
@@ -442,26 +441,16 @@ class ChatScreen(GScreen):
         bub = self.add_msg('...')
 
         def ok(_r, res):
-            try:
-                reply = res['candidates'][0]['content']['parts'][0]['text']
-            except Exception:
-                reply = 'Error: ' + str(res)[:200]
+            reply = res.get('reply', 'Error') if isinstance(res, dict) else 'Error'
             bub.label.text = shape(reply)
             self.convo.append({'role': 'model', 'parts': [{'text': reply}]})
             App.get_running_app().add_chat(q, reply)
 
         def fail(_r, err):
-            bub.label.text = shape('Connection error: ' + str(err)[:150])
+            bub.label.text = shape('Connection error. Check your internet.')
             self.convo.pop()
 
-        url = ('https://generativelanguage.googleapis.com/v1beta/models/'
-               + GEMINI_MODEL + ':generateContent?key=' + GEMINI_KEY)
-        body = {
-            'systemInstruction': {'parts': [{'text':
-                'You are WOD AI. Reply in the same language the user writes in.'}]},
-            'contents': self.convo[-20:],
-        }
-        UrlRequest(url, req_body=json.dumps(body),
+        UrlRequest(WORKER_URL, req_body=json.dumps({'contents': self.convo[-20:]}),
                    req_headers={'Content-Type': 'application/json'},
                    on_success=ok, on_failure=fail, on_error=fail,
                    ca_file=certifi.where(), timeout=60)
@@ -507,4 +496,16 @@ class HistoryScreen(GScreen):
         root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(10))
         root.add_widget(topbar('Chat History', back='home'))
         self.items = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(8))
-        self.items.bind(minimum_height=self.items.setter('hei
+        self.items.bind(minimum_height=self.items.setter('height'))
+        sv = ScrollView(do_scroll_x=False)
+        sv.add_widget(self.items)
+        root.add_widget(sv)
+        self.add_widget(root)
+
+    def refresh(self):
+        self.items.clear_widgets()
+        h = App.get_running_app().history
+        if not h:
+            self.items.add_widget(Txt('No conversations yet.', color=MUTED,
+                                      size_hint_y=None, height=dp(60)))
+            ret
